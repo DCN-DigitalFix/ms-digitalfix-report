@@ -1,0 +1,13 @@
+spring:
+  application:
+    name: mi-api-spring-msal
+ 
+  cloud:
+    azure:
+      active-directory:
+        enabled: true
+        profile:
+          tenant-id: <a6a0c27e-18a7-4209-bd1b-32338be5cb66>
+        credential:
+          client-id: <8e5e408b-c101-4bc1-a5d3-01f702720462>
+        app-id-uri: api://<8e5e408b-c101-4bc1-a5d3-01f702720462>
