@@ -1,263 +1,185 @@
-# ms-digitalfix-workorders
+# ms-digitalfix-report
 
-Microservicio de dominio de DigitalFix. Administra el ciclo de vida de las
-órdenes de trabajo de mantención eléctrica: creación, asignación de cuadrilla,
-cambio de estado y cierre.
+Consumidor de Kafka del sistema DigitalFix. Escucha los mismos eventos de
+dominio que `ms-digitalfix-audit`, pero en vez de un historial completo
+mantiene una sola fila por orden con su estado actual, y expone dos reportes
+de solo lectura: un resumen agregado y el certificado de una orden cerrada.
 
-Forma parte del caso semestral de DSY1107 (Desarrollo Cloud Native I).
-
----
-
-## Lugar en la arquitectura
-
-```
-Angular (SPA) → AWS API Gateway → ms-digitalfix-bff → ms-digitalfix-workorders
-      ↑                ↑                  ↑                      ↑
-      └──────── Microsoft Entra ID (IDaaS) ──────────────────────┘
-```
-
-Este servicio **no se expone a internet**. Solo lo llama el BFF, que le propaga
-el mismo `Authorization: Bearer <jwt>` que recibió del cliente.
-
-Aun así valida el token por su cuenta. La razón es que confiar en que "alguien
-arriba ya validó" deja el servicio abierto a cualquiera que alcance su puerto
-dentro de la red. Cada capa valida: el Gateway, el BFF y este microservicio.
+No expone API de escritura. Su entrada es el tópico.
 
 ---
 
-## Identidad
+## Por qué existe junto a audit
 
-| Concepto | Valor |
-|---|---|
-| Tenant | `6e49fdba-8435-41ac-8074-7b1a04cfd543` (appdemo1945) |
-| Registro de la API | `DigitalFix-API` (`13a645a9-ea0e-498e-96b8-55a3d56f10eb`) |
-| Audiencia esperada | el GUID pelado, y también `api://<guid>` |
-| Emisor esperado | `https://login.microsoftonline.com/<tenant>/v2.0` |
-| Scopes | `OT.Read`, `OT.Create` |
-| App Roles | `Admin`, `Supervisor`, `Cliente`, `Auditor` |
+Los dos microservicios consumen `digitalfix.workorders.events`, cada uno con
+su propio consumer group (`audit-timeline` y `report-metrics`). Ninguno le
+quita mensajes al otro: Kafka entrega el tópico completo a cada grupo. Es la
+misma fuente de eventos resuelta con dos modelos de datos distintos porque
+sirven preguntas distintas:
 
-No se crea un App Registration propio para este microservicio: comparte el de la
-API, porque el token que recibe es el mismo que emitió Entra ID para el cliente
-original.
-
-> La entrega final va contra el tenant `gozalo23`
-> (`a6a0c27e-18a7-4209-bd1b-32338be5cb66`), con el registro de API
-> `8e5e408b-c101-4bc1-a5d3-01f702720462`. Cambiar `issuer-uri` y `audiences` en
-> `application.yaml` al integrar.
-
-### Sobre la audiencia
-
-Con `requestedAccessTokenVersion: 2` en el manifiesto del registro, el claim
-`aud` trae el **Application ID pelado**, no el `api://<guid>`. Con v1 ocurre lo
-contrario. El validador acepta ambas formas para no quedar atado a esa
-configuración.
-
----
-
-## Modelo
-
-### Orden de trabajo
-
-| Campo | Tipo | Nota |
+| | audit | report |
 |---|---|---|
-| `id` | String | Formato `OT-0001` |
-| `cliente` | String | Obligatorio |
-| `descripcion` | String | Obligatorio, máx. 500 caracteres |
-| `direccion` | String | Obligatorio |
-| `estado` | EstadoOT | Arranca en `INGRESADA` |
-| `tecnicoAsignado` | String | Nulo hasta que un Supervisor asigna |
-| `creadaPor` | String | `sub` del token de quien la creó |
-| `creadaEn` | LocalDateTime | |
-| `actualizadaEn` | LocalDateTime | |
-
-### Estados
-
-```
-INGRESADA → ASIGNADA → EN_EJECUCION → CERRADA
-     ↓           ↓            ↓
-         → ANULADA ←
-```
-
-Una orden `CERRADA` o `ANULADA` es terminal: no admite más transiciones.
+| Pregunta que responde | ¿Qué pasó con esta orden, en orden cronológico? | ¿Cómo está el conjunto de órdenes ahora mismo? |
+| Forma de los datos | Un registro por evento (historial, append-only) | Una fila por orden (estado actual, se sobrescribe) |
+| Clave de idempotencia | `eventId` como clave primaria | comparar `occurredAt` contra el último aplicado |
 
 ---
 
-## Endpoints
+## Topología
 
-| Método | Ruta | Roles | Scope |
-|---|---|---|---|
-| GET | `/api/workorders` | los cuatro | `OT.Read` |
-| GET | `/api/workorders/{id}` | los cuatro | `OT.Read` |
-| POST | `/api/workorders` | Admin, Supervisor, Cliente | `OT.Create` |
-| PATCH | `/api/workorders/{id}/estado` | Admin, Supervisor | `OT.Create` |
-| DELETE | `/api/workorders/{id}` | Admin | `OT.Create` |
-| GET | `/api/health` | público | — |
+| Rol | Tópico | Grupo |
+|---|---|---|
+| Consume | `digitalfix.workorders.events` | `report-metrics`, concurrencia 3 (una por partición) |
+| DLT | `digitalfix.workorders.events.DLT` | — |
 
-La autorización combina dos condiciones que son distintas entre sí:
-
-- `hasAnyRole(...)` — **quién** es el usuario (App Role asignado en Entra ID)
-- `hasAuthority('SCOPE_...')` — **qué** consintió la aplicación (scope delegado)
-
-Ambas deben cumplirse. Un `Admin` cuyo token no traiga `OT.Create` tampoco puede
-crear: es el principio de mínimo privilegio.
-
-### Reglas de visibilidad
-
-Un usuario cuyo único rol es `Cliente` recibe solo las órdenes cuyo `creadaPor`
-coincide con el `sub` de su token. Los demás perfiles ven todo.
+Mismo manejo de errores que `audit`: `ErrorNoRecuperableException` (payload
+inválido) va directo a la DLT; cualquier otra excepción reintenta con backoff
+exponencial (1 s, x2, tope 8 s, 3 intentos) antes de derivar ahí. `report` no
+produce eventos de negocio, pero igual declara un productor Kafka porque el
+`DeadLetterPublishingRecoverer` lo necesita para publicar en la DLT.
 
 ---
 
-## Respuestas de error
+## Idempotencia: por qué es distinta de audit
 
-Cuerpo uniforme en JSON, para que el consumidor nunca reciba HTML:
+`order_summary` tiene una fila por `ordenId`, no una por evento. Cada evento
+la actualiza, así que la protección no puede ser "ya existe esta clave
+primaria" como en audit. En su lugar, `OrderSummaryService.aplicar` guarda
+`ultimoEventoOccurredAt` y solo aplica un evento si su `occurredAt` es
+**estrictamente posterior** al ya guardado:
 
-```json
-{
-  "timestamp": "2026-10-09T20:15:33.421",
-  "status": 403,
-  "error": "Forbidden",
-  "message": "Permisos insuficientes para esta operacion",
-  "path": "/api/workorders/OT-0001"
+```java
+if (resumen.getUltimoEventoOccurredAt() != null
+        && !evento.occurredAt().isAfter(resumen.getUltimoEventoOccurredAt())) {
+    // se ignora
 }
 ```
 
-| Código | Cuándo |
-|---|---|
-| 400 | Validación de campos fallida, o transición de estado inválida |
-| 401 | Token ausente, o inválido en firma, emisor, audiencia o vigencia |
-| 403 | Token válido, pero el rol o el scope no alcanzan |
-| 404 | La orden no existe |
+Esto cubre dos casos con la misma condición: un evento genuinamente más viejo
+(desorden), y el reenvío exacto del mismo evento (entrega al menos una vez de
+Kafka) — ambos fallan la comparación `isAfter`.
 
-Spring Security devuelve cuerpos vacíos por defecto en 401 y 403, así que hay
-que registrar un `AuthenticationEntryPoint` y un `AccessDeniedHandler` propios.
-
----
-
-## Stack
-
-- Java 17
-- Spring Boot 4.0.8
-- Maven
-- Package base `cl.duoc.ms_digitalfix_workorders`
-- Dependencias: Web, OAuth2 Resource Server, Validation, Data JPA
+La clave del mensaje es `ordenId`, así que todos los eventos de una orden
+caen en la misma partición y un solo hilo los procesa en el orden en que
+Kafka los entregó; no hay carrera posible entre eventos de la misma orden
+dentro de esta instancia.
 
 ---
 
-## Estructura prevista
+## Estructura
 
 ```
-src/main/java/cl/duoc/ms_digitalfix_workorders/
-├── config/
-│   ├── SecurityConfig.java            cadena de filtros, CORS, método security
-│   ├── SecurityProperties.java        audiencias y orígenes desde el yaml
-│   ├── AudienceValidator.java         valida el claim "aud"
-│   └── JwtAuthoritiesConverter.java   roles → ROLE_*, scp → SCOPE_*
-├── controller/
-│   ├── HealthController.java
-│   └── WorkOrderController.java
-├── dto/
-│   ├── EstadoOT.java
-│   ├── WorkOrder.java
-│   ├── CrearWorkOrderRequest.java
-│   └── CambiarEstadoRequest.java
-├── entity/
-│   └── WorkOrderEntity.java
-├── repository/
-│   └── WorkOrderRepository.java
-├── service/
-│   └── WorkOrderService.java
-└── exception/
-    ├── ApiError.java
-    ├── NotFoundException.java
-    ├── EstadoInvalidoException.java
-    ├── JsonAuthenticationEntryPoint.java
-    ├── JsonAccessDeniedHandler.java
-    └── GlobalExceptionHandler.java
+config/
+  DigitalfixKafkaProperties.java   topico y ajustes de reintento, desde application.yaml
+  KafkaConsumerConfig.java         consumer factory, error handler (backoff + DLT)
+  KafkaProducerConfig.java         producer factory y KafkaTemplate (solo para la DLT)
+  JacksonConfig.java                ObjectMapper explicito (JavaTimeModule, tolera campos nuevos)
+  SecurityConfig.java              JWT, audiencia, CORS
+messaging/
+  WorkOrderEvent.java              evento consumido (contrato con workorders)
+  WorkOrderEventParser.java        valida y convierte el payload crudo
+  consumer/WorkOrderEventConsumer.java
+model/OrderSummaryEntity.java      una fila por orden, no un historial
+repository/OrderSummaryRepository.java
+service/OrderSummaryService.java   aplicar(), resumen(), certificado()
+dto/
+  ReportSummaryView.java
+  CertificateView.java
+controller/
+  ReportController.java           /api/reports/summary, /api/reports/orders/{id}/certificate
+  HealthController.java           /api/health (publico)
+exception/
+  ErrorRecuperableException.java
+  ErrorNoRecuperableException.java
+  OrdenNoCerradaException.java    409 cuando se pide el certificado de una orden no cerrada
 ```
-
-Las clases de `config/` y `exception/` son prácticamente idénticas a las del
-BFF. Conviene copiarlas y cambiar solo el package.
 
 ---
 
-## Configuración
+## API
 
-`src/main/resources/application.yaml`:
+Roles `Admin`, `Supervisor` o `Auditor`, scope `OT.Read`.
 
-```yaml
-server:
-  port: 8081
+| Método | Ruta | Descripción |
+|---|---|---|
+| GET | `/api/reports/summary` | Órdenes por estado, total, y promedio de horas hasta el cierre (solo entre las `CERRADA`) |
+| GET | `/api/reports/orders/{ordenId}/certificate` | Datos del certificado de una orden `CERRADA`; 404 si la orden no existe, 409 si existe pero no está cerrada |
+| GET | `/api/health` | Público |
 
-spring:
-  application:
-    name: ms-digitalfix-workorders
+Ejemplo de `/api/reports/summary`:
 
-  security:
-    oauth2:
-      resourceserver:
-        jwt:
-          issuer-uri: https://login.microsoftonline.com/6e49fdba-8435-41ac-8074-7b1a04cfd543/v2.0
-
-digitalfix:
-  security:
-    audiences:
-      - 13a645a9-ea0e-498e-96b8-55a3d56f10eb
-      - api://13a645a9-ea0e-498e-96b8-55a3d56f10eb
-  cors:
-    allowed-origins:
-      - http://localhost:8080
+```json
+{
+  "ordenesPorEstado": { "INGRESADA": 2, "ASIGNADA": 1, "CERRADA": 5 },
+  "total": 8,
+  "tiempoPromedioCierreHoras": 36.5
+}
 ```
 
-Puerto 8081 para no chocar con el BFF en desarrollo local.
-
-CORS solo necesita permitir al BFF, no al frontend: el navegador nunca llama
-directamente a este servicio.
+`tiempoPromedioCierreHoras` es `null` si todavía no hay ninguna orden cerrada.
 
 ---
 
-## Ejecutar
+## Probarlo de punta a punta
+
+Requiere el clúster de Kafka levantado (ver el repo `infra`):
+
+```
+docker compose -f docker-compose.kafka.yml --env-file .env up -d
+```
 
 ```
 ./mvnw spring-boot:run
 ```
 
-Queda en `http://localhost:8081`.
+Queda en el puerto 8086. En Kafka UI (`http://localhost:8089`), producir en
+`digitalfix.workorders.events` con clave `OT-1001`:
 
-Prueba rápida sin token:
-
-```
-GET http://localhost:8081/api/health       → 200
-GET http://localhost:8081/api/workorders   → 401
+```json
+{"eventId":"re-1","eventType":"ORDEN_CREADA","occurredAt":"2026-11-22T00:00:00Z","ordenId":"OT-1001","estadoNuevo":"INGRESADA","cliente":"Cliente Reporte"}
 ```
 
----
+y después, con `occurredAt` posterior:
 
-## Integración con el BFF
-
-Hoy el BFF resuelve las órdenes con un `WorkOrderService` en memoria. Al
-conectar este microservicio, esa clase pasa a ser un cliente HTTP que reenvía
-las llamadas propagando el token recibido. La interfaz pública que consume
-`WorkOrderController` no cambia.
-
-El BFF necesitará una propiedad nueva apuntando a este servicio:
-
-```yaml
-digitalfix:
-  servicios:
-    workorders: http://localhost:8081
+```json
+{"eventId":"re-2","eventType":"ESTADO_CAMBIADO","occurredAt":"2026-11-22T01:00:00Z","ordenId":"OT-1001","estadoAnterior":"INGRESADA","estadoNuevo":"CERRADA","tecnicoAsignado":"Tecnico Reporte"}
 ```
 
-Y en producción, la IP privada de la instancia EC2 correspondiente.
+El log muestra `orden OT-1001 actualizada a estado CERRADA`. Reenviar el
+primer mensaje otra vez: el log muestra `no es mas nuevo que el ya aplicado,
+se ignora` y no hay `UPDATE` en el SQL logueado.
+
+Para ver los dos consumer groups avanzando por separado sobre el mismo
+tópico (con `audit` corriendo a la vez):
+
+```
+docker exec digitalfix-kafka1 kafka-consumer-groups \
+  --bootstrap-server kafka1:29092,kafka2:29092,kafka3:29092 \
+  --describe --group report-metrics
+
+docker exec digitalfix-kafka1 kafka-consumer-groups \
+  --bootstrap-server kafka1:29092,kafka2:29092,kafka3:29092 \
+  --describe --group audit-timeline
+```
 
 ---
 
 ## Pendiente
 
-- Persistencia real. La primera versión puede arrancar en memoria para
-  desbloquear al frontend, pero la rúbrica de EP1 pide integración con base de
-  datos cloud "mediante entidades, repositorios y propiedades de conexión"
-- Validación de transiciones de estado: hoy cualquier cambio es aceptado
-- Publicar eventos hacia `ms-digitalfix-audit` cuando una orden cambia de estado
-- Desplegar en EC2 como servicio systemd, igual que el BFF
-```
+- Pantalla de reportes en `DigitalFix-Frontend` (`reports.ts` es un
+  placeholder).
+- Despliegue en AWS detrás del BFF, igual que `audit`.
+- `ddl-auto: update` en vez de migraciones (igual que el resto de los
+  microservicios del proyecto).
+- No hay forma de corregir un resumen si workorders publica un evento con un
+  error de negocio ya consolidado (por ejemplo, una orden marcada `CERRADA`
+  por error): `report` solo refleja lo que recibe, no audita el contenido.
+
+---
+
+## Nota sobre Spring Boot 4 / Spring Kafka 4
+
+Mismo detalle que en `ms-digitalfix-audit`: `ExponentialBackOffWithMaxRetries`
+vive en `org.springframework.kafka.support`, no en `...listener`. El
+`ObjectMapper` se declara a mano en `JacksonConfig` en vez de depender de la
+autoconfiguración de Jackson.

@@ -1,13 +1,47 @@
+server:
+  port: 8086
+
 spring:
+  profiles:
+    active: dev
   application:
-    name: mi-api-spring-msal
- 
-  cloud:
-    azure:
-      active-directory:
-        enabled: true
-        profile:
-          tenant-id: <a6a0c27e-18a7-4209-bd1b-32338be5cb66>
-        credential:
-          client-id: <8e5e408b-c101-4bc1-a5d3-01f702720462>
-        app-id-uri: api://<8e5e408b-c101-4bc1-a5d3-01f702720462>
+    name: ms-digitalfix-report
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://login.microsoftonline.com/a6a0c27e-18a7-4209-bd1b-32338be5cb66/v2.0
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092,localhost:9093,localhost:9094}
+
+digitalfix:
+  security:
+    audiences:
+      - 8e5e408b-c101-4bc1-a5d3-01f702720462
+      - api://8e5e408b-c101-4bc1-a5d3-01f702720462
+  cors:
+    allowed-origins:
+      - http://localhost:4200
+      - https://44.206.195.117
+
+  # ---------------------------------------------------------------------------
+  # Kafka: report consume digitalfix.workorders.events con su propio grupo
+  # ("report-metrics"), distinto del de audit ("audit-timeline"). Los dos leen
+  # el mismo topico completo sin quitarse mensajes entre si: asi es como
+  # funcionan los consumer groups.
+  # ---------------------------------------------------------------------------
+  kafka:
+    topics:
+      workorders-events: digitalfix.workorders.events
+    consumer:
+      concurrencia: 3
+      max-reintentos: 3
+      backoff-inicial-ms: 1000
+      backoff-multiplicador: 2.0
+      backoff-maximo-ms: 8000
+
+logging:
+  level:
+    cl.duoc.ms_digitalfix_report: INFO
