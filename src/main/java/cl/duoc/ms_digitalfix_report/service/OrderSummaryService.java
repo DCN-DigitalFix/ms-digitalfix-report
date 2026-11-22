@@ -40,10 +40,12 @@ public class OrderSummaryService {
     private static final String EVENTO_ORDEN_CREADA = "ORDEN_CREADA";
 
     private final OrderSummaryRepository repository;
+    private final AuditTrailService auditTrailService;
 
     @Autowired
-    public OrderSummaryService(OrderSummaryRepository repository) {
+    public OrderSummaryService(OrderSummaryRepository repository, AuditTrailService auditTrailService) {
         this.repository = repository;
+        this.auditTrailService = auditTrailService;
     }
 
     public void aplicar(WorkOrderEvent evento) {
@@ -98,7 +100,7 @@ public class OrderSummaryService {
                 ? null
                 : duraciones.stream().mapToDouble(d -> d.toMinutes() / 60.0).average().orElseThrow();
 
-        return new ReportSummaryView(porEstado, ordenes.size(), promedioHoras);
+        return new ReportSummaryView(porEstado, ordenes.size(), promedioHoras, auditTrailService.total());
     }
 
     public CertificateView certificado(String ordenId) {

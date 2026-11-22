@@ -32,6 +32,9 @@ class OrderSummaryServiceTest {
     @Mock
     private OrderSummaryRepository repository;
 
+    @Mock
+    private AuditTrailService auditTrailService;
+
     private OrderSummaryService service;
 
     private final Instant t0 = Instant.parse("2026-11-20T10:00:00Z");
@@ -39,7 +42,7 @@ class OrderSummaryServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void crearServicio() {
-        service = new OrderSummaryService(repository);
+        service = new OrderSummaryService(repository, auditTrailService);
     }
 
     @Test
@@ -142,6 +145,7 @@ class OrderSummaryServiceTest {
                 "OT-0003", "Cliente C", "ASIGNADA", "T3", t0, null, t0);
 
         when(repository.findAll()).thenReturn(List.of(cerrada1, cerrada2, enCurso));
+        when(auditTrailService.total()).thenReturn(7L);
 
         ReportSummaryView resumen = service.resumen();
 
@@ -149,6 +153,7 @@ class OrderSummaryServiceTest {
         assertThat(resumen.ordenesPorEstado()).containsEntry("CERRADA", 2L);
         assertThat(resumen.ordenesPorEstado()).containsEntry("ASIGNADA", 1L);
         assertThat(resumen.tiempoPromedioCierreHoras()).isEqualTo(1.5);
+        assertThat(resumen.totalEventosAuditoria()).isEqualTo(7L);
     }
 
     @Test

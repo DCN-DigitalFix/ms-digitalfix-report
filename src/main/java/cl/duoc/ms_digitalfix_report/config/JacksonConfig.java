@@ -2,6 +2,7 @@ package cl.duoc.ms_digitalfix_report.config;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +15,10 @@ import org.springframework.context.annotation.Configuration;
  *
  * FAIL_ON_UNKNOWN_PROPERTIES en false porque workorders puede agregar campos
  * al evento antes de que report los use.
+ *
+ * WRITE_DATES_AS_TIMESTAMPS en false por consistencia con audit y workorders:
+ * este servicio hoy solo consume, pero si en el futuro publica algo con
+ * Instant, debe salir como texto ISO-8601 y no como [segundos, nanos].
  */
 @Configuration
 public class JacksonConfig {
@@ -22,6 +27,7 @@ public class JacksonConfig {
     public ObjectMapper objectMapper() {
         return new ObjectMapper()
                 .registerModule(new JavaTimeModule())
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     }
 }

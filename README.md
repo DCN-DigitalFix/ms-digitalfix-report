@@ -1,11 +1,18 @@
 # ms-digitalfix-report
 
-Consumidor de Kafka del sistema DigitalFix. Escucha los mismos eventos de
-dominio que `ms-digitalfix-audit`, pero en vez de un historial completo
-mantiene una sola fila por orden con su estado actual, y expone dos reportes
-de solo lectura: un resumen agregado y el certificado de una orden cerrada.
+Consumidor de Kafka del sistema DigitalFix, con **dos** consumidores sobre
+**dos** tópicos distintos:
 
-No expone API de escritura. Su entrada es el tópico.
+1. Escucha los mismos eventos de dominio que `ms-digitalfix-audit`
+   (`digitalfix.workorders.events`), pero en vez de un historial completo
+   mantiene una sola fila por orden con su estado actual.
+2. Escucha el registro normalizado que `ms-digitalfix-audit` publica
+   (`digitalfix.audit.events`) y lleva la cuenta de cuántos eventos de
+   auditoría existen en total.
+
+Expone dos reportes de solo lectura: un resumen agregado (que incluye ese
+total de auditoría) y el certificado de una orden cerrada. No expone API de
+escritura.
 
 ---
 
@@ -30,13 +37,21 @@ sirven preguntas distintas:
 | Rol | Tópico | Grupo |
 |---|---|---|
 | Consume | `digitalfix.workorders.events` | `report-metrics`, concurrencia 3 (una por partición) |
+| Consume | `digitalfix.audit.events` | `report-audit-trail` |
 | DLT | `digitalfix.workorders.events.DLT` | — |
 
-Mismo manejo de errores que `audit`: `ErrorNoRecuperableException` (payload
-inválido) va directo a la DLT; cualquier otra excepción reintenta con backoff
-exponencial (1 s, x2, tope 8 s, 3 intentos) antes de derivar ahí. `report` no
-produce eventos de negocio, pero igual declara un productor Kafka porque el
-`DeadLetterPublishingRecoverer` lo necesita para publicar en la DLT.
+Los dos consumidores son independientes entre sí: viven en clases distintas
+(`WorkOrderEventConsumer` y `AuditTrailConsumer`), con su propio grupo, su
+propio parser (`WorkOrderEventParser` / `AuditRecordEventParser`) y su propia
+tabla (`order_summary` / `audit_trail_event`). Uno puede fallar o atrasarse
+sin afectar al otro.
+
+Mismo manejo de errores en ambos: `ErrorNoRecuperableException` (payload
+inválido) va directo a la DLT del tópico correspondiente; cualquier otra
+excepción reintenta con backoff exponencial (1 s, x2, tope 8 s, 3 intentos)
+antes de derivar ahí. `report` no produce eventos de negocio, pero igual
+declara un productor Kafka porque el `DeadLetterPublishingRecoverer` lo
+necesita para publicar en la DLT.
 
 ---
 
@@ -64,6 +79,17 @@ caen en la misma partición y un solo hilo los procesa en el orden en que
 Kafka los entregó; no hay carrera posible entre eventos de la misma orden
 dentro de esta instancia.
 
+### El segundo consumidor (`audit_trail_event`): contar sin duplicar
+
+Este consumidor no necesita guardar el contenido del evento, solo saber
+cuántos existen. La tabla `audit_trail_event` usa el mismo patrón que
+`audit_events` en `ms-digitalfix-audit`: `eventId` como clave primaria.
+`AuditTrailService.registrar` hace `existsById` antes de guardar (cubre el
+reenvío normal) y además atrapa `DataIntegrityViolationException` al
+guardar (cubre la carrera residual si dos hilos procesaran el mismo
+`eventId`, aunque con un solo listener por partición no debería pasar).
+`total()` es simplemente `repository.count()`.
+
 ---
 
 ## Estructura
@@ -78,10 +104,20 @@ config/
 messaging/
   WorkOrderEvent.java              evento consumido (contrato con workorders)
   WorkOrderEventParser.java        valida y convierte el payload crudo
-  consumer/WorkOrderEventConsumer.java
-model/OrderSummaryEntity.java      una fila por orden, no un historial
-repository/OrderSummaryRepository.java
-service/OrderSummaryService.java   aplicar(), resumen(), certificado()
+  AuditRecordEvent.java           evento consumido (contrato con audit)
+  AuditRecordEventParser.java      valida y convierte el payload crudo
+  consumer/
+    WorkOrderEventConsumer.java    grupo report-metrics
+    AuditTrailConsumer.java        grupo report-audit-trail
+model/
+  OrderSummaryEntity.java          una fila por orden, no un historial
+  AuditTrailEventEntity.java       eventId como clave primaria, solo para contar
+repository/
+  OrderSummaryRepository.java
+  AuditTrailEventRepository.java
+service/
+  OrderSummaryService.java         aplicar(), resumen(), certificado()
+  AuditTrailService.java           registrar(), total()
 dto/
   ReportSummaryView.java
   CertificateView.java
@@ -112,11 +148,14 @@ Ejemplo de `/api/reports/summary`:
 {
   "ordenesPorEstado": { "INGRESADA": 2, "ASIGNADA": 1, "CERRADA": 5 },
   "total": 8,
-  "tiempoPromedioCierreHoras": 36.5
+  "tiempoPromedioCierreHoras": 36.5,
+  "totalEventosAuditoria": 23
 }
 ```
 
 `tiempoPromedioCierreHoras` es `null` si todavía no hay ninguna orden cerrada.
+`totalEventosAuditoria` viene del segundo consumidor (`audit_trail_event`),
+no de `order_summary`: es independiente del resto del resumen.
 
 ---
 
@@ -149,8 +188,8 @@ El log muestra `orden OT-1001 actualizada a estado CERRADA`. Reenviar el
 primer mensaje otra vez: el log muestra `no es mas nuevo que el ya aplicado,
 se ignora` y no hay `UPDATE` en el SQL logueado.
 
-Para ver los dos consumer groups avanzando por separado sobre el mismo
-tópico (con `audit` corriendo a la vez):
+Para ver los tres consumer groups avanzando por separado sobre los dos
+tópicos (con `audit` corriendo a la vez):
 
 ```
 docker exec digitalfix-kafka1 kafka-consumer-groups \
@@ -160,14 +199,23 @@ docker exec digitalfix-kafka1 kafka-consumer-groups \
 docker exec digitalfix-kafka1 kafka-consumer-groups \
   --bootstrap-server kafka1:29092,kafka2:29092,kafka3:29092 \
   --describe --group audit-timeline
+
+docker exec digitalfix-kafka1 kafka-consumer-groups \
+  --bootstrap-server kafka1:29092,kafka2:29092,kafka3:29092 \
+  --describe --group report-audit-trail
 ```
+
+Para probar el segundo consumidor específicamente: con `audit` corriendo,
+producir el mismo mensaje en `digitalfix.workorders.events` que en el
+ejemplo de arriba. `audit` lo guarda y publica un registro en
+`digitalfix.audit.events`; el log de `report` muestra
+`[report] evento de auditoria ... registrado` y
+`GET /api/reports/summary` incrementa `totalEventosAuditoria` en 1.
 
 ---
 
 ## Pendiente
 
-- Pantalla de reportes en `DigitalFix-Frontend` (`reports.ts` es un
-  placeholder).
 - Despliegue en AWS detrás del BFF, igual que `audit`.
 - `ddl-auto: update` en vez de migraciones (igual que el resto de los
   microservicios del proyecto).

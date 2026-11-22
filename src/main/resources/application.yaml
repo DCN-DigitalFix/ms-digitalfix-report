@@ -27,14 +27,20 @@ digitalfix:
       - https://44.206.195.117
 
   # ---------------------------------------------------------------------------
-  # Kafka: report consume digitalfix.workorders.events con su propio grupo
-  # ("report-metrics"), distinto del de audit ("audit-timeline"). Los dos leen
-  # el mismo topico completo sin quitarse mensajes entre si: asi es como
-  # funcionan los consumer groups.
+  # Kafka: report consume dos topicos, cada uno con su propio grupo.
+  #
+  #   digitalfix.workorders.events -> grupo report-metrics
+  #     Mismo topico que lee audit con "audit-timeline": ninguno le quita
+  #     mensajes al otro.
+  #
+  #   digitalfix.audit.events -> grupo report-audit-trail
+  #     Lo publica audit despues de guardar cada WorkOrderEvent. report solo
+  #     cuenta cuantos hay (ver AuditTrailService) y lo expone en el resumen.
   # ---------------------------------------------------------------------------
   kafka:
     topics:
       workorders-events: digitalfix.workorders.events
+      audit-events: digitalfix.audit.events
     consumer:
       concurrencia: 3
       max-reintentos: 3

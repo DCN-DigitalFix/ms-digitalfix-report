@@ -9,8 +9,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "digitalfix.kafka")
 public record DigitalfixKafkaProperties(Topics topics, Consumer consumer) {
 
-    /** @param workordersEvents topico de origen: eventos de dominio de workorders */
-    public record Topics(String workordersEvents) {}
+    /**
+     * @param workordersEvents topico de eventos de dominio de workorders (grupo report-metrics)
+     * @param auditEvents      topico de registros normalizados de audit (grupo report-audit-trail)
+     */
+    public record Topics(String workordersEvents, String auditEvents) {}
 
     /**
      * @param concurrencia         numero de hilos del listener (una por particion)
