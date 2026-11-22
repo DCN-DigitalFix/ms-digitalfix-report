@@ -17,7 +17,7 @@ import cl.duoc.ms_digitalfix_report.service.OrderSummaryService;
  * workorders publica.
  */
 @RestController
-@RequestMapping("/api/reports")
+@RequestMapping("/api/v1/reports")
 public class ReportController {
 
     private final OrderSummaryService service;

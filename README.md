@@ -122,7 +122,7 @@ dto/
   ReportSummaryView.java
   CertificateView.java
 controller/
-  ReportController.java           /api/reports/summary, /api/reports/orders/{id}/certificate
+  ReportController.java           /api/v1/reports/summary, /api/v1/reports/orders/{id}/certificate
   HealthController.java           /api/health (publico)
 exception/
   ErrorRecuperableException.java
@@ -138,11 +138,11 @@ Roles `Admin`, `Supervisor` o `Auditor`, scope `OT.Read`.
 
 | Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/api/reports/summary` | Órdenes por estado, total, y promedio de horas hasta el cierre (solo entre las `CERRADA`) |
-| GET | `/api/reports/orders/{ordenId}/certificate` | Datos del certificado de una orden `CERRADA`; 404 si la orden no existe, 409 si existe pero no está cerrada |
+| GET | `/api/v1/reports/summary` | Órdenes por estado, total, y promedio de horas hasta el cierre (solo entre las `CERRADA`) |
+| GET | `/api/v1/reports/orders/{ordenId}/certificate` | Datos del certificado de una orden `CERRADA`; 404 si la orden no existe, 409 si existe pero no está cerrada |
 | GET | `/api/health` | Público |
 
-Ejemplo de `/api/reports/summary`:
+Ejemplo de `/api/v1/reports/summary`:
 
 ```json
 {
@@ -210,7 +210,7 @@ producir el mismo mensaje en `digitalfix.workorders.events` que en el
 ejemplo de arriba. `audit` lo guarda y publica un registro en
 `digitalfix.audit.events`; el log de `report` muestra
 `[report] evento de auditoria ... registrado` y
-`GET /api/reports/summary` incrementa `totalEventosAuditoria` en 1.
+`GET /api/v1/reports/summary` incrementa `totalEventosAuditoria` en 1.
 
 ---
 
