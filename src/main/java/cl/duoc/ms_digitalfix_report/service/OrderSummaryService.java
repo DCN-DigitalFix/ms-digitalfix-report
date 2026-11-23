@@ -39,14 +39,11 @@ public class OrderSummaryService {
     private static final String ESTADO_CERRADA = "CERRADA";
     private static final String EVENTO_ORDEN_CREADA = "ORDEN_CREADA";
 
-    private final OrderSummaryRepository repository;
-    private final AuditTrailService auditTrailService;
+    @Autowired
+    private OrderSummaryRepository repository;
 
     @Autowired
-    public OrderSummaryService(OrderSummaryRepository repository, AuditTrailService auditTrailService) {
-        this.repository = repository;
-        this.auditTrailService = auditTrailService;
-    }
+    private AuditTrailService auditTrailService;
 
     public void aplicar(WorkOrderEvent evento) {
         OrderSummaryEntity resumen = repository.findById(evento.ordenId())

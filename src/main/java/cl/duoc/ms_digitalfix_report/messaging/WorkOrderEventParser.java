@@ -16,12 +16,8 @@ import cl.duoc.ms_digitalfix_report.exception.ErrorNoRecuperableException;
 @Component
 public class WorkOrderEventParser {
 
-    private final ObjectMapper mapper;
-
     @Autowired
-    public WorkOrderEventParser(ObjectMapper mapper) {
-        this.mapper = mapper;
-    }
+    private ObjectMapper mapper;
 
     public WorkOrderEvent parsear(String payload) {
         if (payload == null || payload.isBlank()) {

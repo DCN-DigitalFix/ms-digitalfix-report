@@ -31,14 +31,11 @@ public class AuditTrailConsumer {
 
     public static final String CONSUMER_GROUP = "report-audit-trail";
 
-    private final AuditRecordEventParser parser;
-    private final AuditTrailService service;
+    @Autowired
+    private AuditRecordEventParser parser;
 
     @Autowired
-    public AuditTrailConsumer(AuditRecordEventParser parser, AuditTrailService service) {
-        this.parser = parser;
-        this.service = service;
-    }
+    private AuditTrailService service;
 
     @KafkaListener(topics = "${digitalfix.kafka.topics.audit-events}", groupId = CONSUMER_GROUP)
     public void recibir(ConsumerRecord<String, String> record) {

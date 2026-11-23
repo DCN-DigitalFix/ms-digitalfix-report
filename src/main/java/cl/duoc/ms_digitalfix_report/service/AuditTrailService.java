@@ -23,12 +23,8 @@ public class AuditTrailService {
 
     private static final Logger log = LoggerFactory.getLogger(AuditTrailService.class);
 
-    private final AuditTrailEventRepository repository;
-
     @Autowired
-    public AuditTrailService(AuditTrailEventRepository repository) {
-        this.repository = repository;
-    }
+    private AuditTrailEventRepository repository;
 
     public void registrar(AuditRecordEvent evento) {
         if (repository.existsById(evento.eventId())) {

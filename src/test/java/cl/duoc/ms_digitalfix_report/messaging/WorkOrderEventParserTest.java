@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,7 +18,14 @@ class WorkOrderEventParserTest {
             .registerModule(new JavaTimeModule())
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    private final WorkOrderEventParser parser = new WorkOrderEventParser(mapper);
+    // WorkOrderEventParser se inyecta por campo: no tiene constructor que invocar.
+    private final WorkOrderEventParser parser = crearParser();
+
+    private WorkOrderEventParser crearParser() {
+        WorkOrderEventParser p = new WorkOrderEventParser();
+        ReflectionTestUtils.setField(p, "mapper", mapper);
+        return p;
+    }
 
     @Test
     void parseaUnMensajeValido() {

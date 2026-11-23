@@ -15,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import cl.duoc.ms_digitalfix_report.exception.ErrorRecuperableException;
 import cl.duoc.ms_digitalfix_report.messaging.AuditRecordEvent;
@@ -34,7 +35,9 @@ class AuditTrailServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void crearServicio() {
-        service = new AuditTrailService(repository);
+        // AuditTrailService se inyecta por campo: no tiene constructor que invocar.
+        service = new AuditTrailService();
+        ReflectionTestUtils.setField(service, "repository", repository);
     }
 
     @Test

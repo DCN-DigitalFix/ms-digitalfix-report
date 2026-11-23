@@ -16,12 +16,8 @@ import cl.duoc.ms_digitalfix_report.exception.ErrorNoRecuperableException;
 @Component
 public class AuditRecordEventParser {
 
-    private final ObjectMapper mapper;
-
     @Autowired
-    public AuditRecordEventParser(ObjectMapper mapper) {
-        this.mapper = mapper;
-    }
+    private ObjectMapper mapper;
 
     public AuditRecordEvent parsear(String payload) {
         if (payload == null || payload.isBlank()) {

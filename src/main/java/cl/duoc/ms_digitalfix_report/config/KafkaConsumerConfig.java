@@ -45,12 +45,8 @@ public class KafkaConsumerConfig {
 
     public static final String CONSUMER_GROUP = "report-metrics";
 
-    private final DigitalfixKafkaProperties props;
-
     @Autowired
-    public KafkaConsumerConfig(DigitalfixKafkaProperties props) {
-        this.props = props;
-    }
+    private DigitalfixKafkaProperties props;
 
     @Bean
     public ConsumerFactory<String, String> consumerFactory(

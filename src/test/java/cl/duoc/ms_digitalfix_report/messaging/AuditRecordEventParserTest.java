@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,7 +18,14 @@ class AuditRecordEventParserTest {
             .registerModule(new JavaTimeModule())
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
-    private final AuditRecordEventParser parser = new AuditRecordEventParser(mapper);
+    // AuditRecordEventParser se inyecta por campo: no tiene constructor que invocar.
+    private final AuditRecordEventParser parser = crearParser();
+
+    private AuditRecordEventParser crearParser() {
+        AuditRecordEventParser p = new AuditRecordEventParser();
+        ReflectionTestUtils.setField(p, "mapper", mapper);
+        return p;
+    }
 
     @Test
     void parseaUnRegistroValido() {

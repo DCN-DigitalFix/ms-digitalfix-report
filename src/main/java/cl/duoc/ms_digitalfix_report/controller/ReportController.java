@@ -20,12 +20,8 @@ import cl.duoc.ms_digitalfix_report.service.OrderSummaryService;
 @RequestMapping("/api/v1/reports")
 public class ReportController {
 
-    private final OrderSummaryService service;
-
     @Autowired
-    public ReportController(OrderSummaryService service) {
-        this.service = service;
-    }
+    private OrderSummaryService service;
 
     @GetMapping("/summary")
     @PreAuthorize("hasAnyRole('Admin', 'Supervisor', 'Auditor') and hasAuthority('SCOPE_OT.Read')")

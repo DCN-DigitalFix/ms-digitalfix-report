@@ -16,6 +16,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import cl.duoc.ms_digitalfix_report.dto.CertificateView;
 import cl.duoc.ms_digitalfix_report.dto.ReportSummaryView;
@@ -42,7 +43,10 @@ class OrderSummaryServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void crearServicio() {
-        service = new OrderSummaryService(repository, auditTrailService);
+        // OrderSummaryService se inyecta por campo: no tiene constructor que invocar.
+        service = new OrderSummaryService();
+        ReflectionTestUtils.setField(service, "repository", repository);
+        ReflectionTestUtils.setField(service, "auditTrailService", auditTrailService);
     }
 
     @Test
